@@ -1,7 +1,13 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useState } from "react";
 import { useRoutes, Routes, Route, Navigate } from "react-router-dom";
 import Home from "./components/home";
+import ErrorBoundary from "./components/ErrorBoundary";
 import routes from "tempo-routes";
+import ProtectedRoute from "./components/ProtectedRoute";
+import { useAuth } from "./context/AuthContext";
+import { Toaster } from "./components/ui/toaster";
+import UserProvider from "./context/UserContext";
+import AdvancedPreloader from "./components/ui/preloader/AdvancedPreloader";
 
 // Lazy load components for better performance
 const LandingPage = lazy(() => import("./components/landing/LandingPage"));
@@ -21,39 +27,45 @@ const SpendingPatterns = lazy(
 );
 const GoalProgress = lazy(() => import("./components/dashboard/GoalProgress"));
 
-function App() {
+const App = () => {
+  const { isLoading, user } = useAuth();
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+
+  if (isLoading) {
+    // Show premium preloader while checking auth
+    return <AdvancedPreloader duration={7000} onComplete={() => {}} />;
+  }
+
   return (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center h-screen bg-gray-950 text-white">
-          <div className="flex flex-col items-center">
-            <div className="h-8 w-8 rounded-full border-2 border-t-transparent border-yellow-400 animate-spin mb-4"></div>
-            <div className="text-yellow-400 font-medium">
-              Loading WealthWise...
-            </div>
-          </div>
-        </div>
-      }
-    >
-      <>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/dashboard" element={<Home />} />
-          <Route path="/login" element={<LoginForm />} />
-          <Route path="/signup" element={<SignupForm />} />
-          <Route path="/goals" element={<Home />} />
-          <Route path="/expenses" element={<Home />} />
-          <Route path="/transactions" element={<Home />} />
-          <Route path="/analytics" element={<Home />} />
-          <Route path="/profile" element={<Home />} />
-          <Route path="/settings" element={<Home />} />
-          {/* Redirect any other routes to dashboard */}
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
-        {import.meta.env.VITE_TEMPO === "true" && useRoutes(routes)}
-      </>
-    </Suspense>
+    <ErrorBoundary>
+      <UserProvider>
+        <Suspense
+          fallback={<AdvancedPreloader duration={7000} onComplete={() => {}} />}
+        >
+          <Routes>
+            {/* Public routes - accessible to all */}
+            <Route path="/landing" element={<LandingPage />} />
+            <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <LoginForm />} />
+            <Route path="/signup" element={user ? <Navigate to="/dashboard" /> : <SignupForm />} />
+            
+            {/* Root route - show landing for unauthenticated users, redirect to dashboard for authenticated users */}
+            <Route path="/" element={user ? <Navigate to="/dashboard" /> : <LandingPage />} />
+            
+            {/* Protected routes - require authentication */}
+            <Route
+              path="/*"
+              element={
+                <ProtectedRoute>
+                  <Home />
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+          <Toaster />
+        </Suspense>
+      </UserProvider>
+    </ErrorBoundary>
   );
-}
+};
 
 export default App;

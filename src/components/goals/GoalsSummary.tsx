@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   PlusCircle,
@@ -9,6 +9,10 @@ import {
   ArrowRight,
   Edit,
   Trash2,
+  AlertCircle,
+  Plus,
+  PiggyBank,
+  Home,
 } from "lucide-react";
 import {
   Card,
@@ -21,75 +25,197 @@ import { Progress } from "../ui/progress";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { useToast } from "../ui/use-toast";
+import { useAuth } from "../../context/AuthContext";
+import { getGoals, addGoal, updateGoal, deleteGoal } from "../../lib/database";
+import type { Goal } from "../../types/supabase";
+import { format, parseISO, isValid } from "date-fns";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../ui/select";
+import { useUser } from "../../context/UserContext";
+import { Skeleton } from "../ui/skeleton";
+import { supabase } from "../../lib/supabase";
+import { formatCurrency } from "../../lib/utils";
 
-interface Goal {
-  id: string;
-  title: string;
-  targetAmount: number;
-  currentAmount: number;
-  deadline: string;
-  category: string;
-}
+// Define goal categories
+const GOAL_CATEGORIES = [
+  "Savings",
+  "Travel",
+  "Education",
+  "Home",
+  "Vehicle",
+  "Investment",
+  "Technology",
+  "Health",
+  "Emergency",
+  "Other"
+];
 
-interface GoalsSummaryProps {
-  goals?: Goal[];
-  onAddGoal?: () => void;
-}
-
-const GoalsSummary = ({
-  goals = [
-    {
-      id: "1",
-      title: "Spring Break Trip",
-      targetAmount: 500,
-      currentAmount: 350,
-      deadline: "2023-03-15",
-      category: "Travel",
-    },
-    {
-      id: "2",
-      title: "New Laptop",
-      targetAmount: 1200,
-      currentAmount: 600,
-      deadline: "2023-06-30",
-      category: "Technology",
-    },
-    {
-      id: "3",
-      title: "Emergency Fund",
-      targetAmount: 1000,
-      currentAmount: 250,
-      deadline: "2023-12-31",
-      category: "Savings",
-    },
-  ],
-  onAddGoal = () => console.log("Add goal clicked"),
-}: GoalsSummaryProps) => {
+const GoalsSummary = () => {
+  const { user } = useAuth();
+  const { toast } = useToast();
   const [showAddGoal, setShowAddGoal] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const [newGoal, setNewGoal] = useState({
     title: "",
     targetAmount: "",
     currentAmount: "",
     deadline: "",
-    category: "",
+    category: "Savings",
   });
+  const { currency } = useUser();
+
+  useEffect(() => {
+    if (user) {
+      fetchGoals();
+    }
+  }, [user]);
+
+  const fetchGoals = async () => {
+    if (!user?.id) return;
+    
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("goals")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      
+      if (error) throw error;
+      
+      setGoals(data || []);
+    } catch (error) {
+      console.error("Error fetching goals:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load financial goals",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setNewGoal({ ...newGoal, [name]: value });
   };
 
-  const handleAddGoal = () => {
-    // In a real implementation, this would add the goal
-    console.log("Adding goal:", newGoal);
-    setShowAddGoal(false);
-    setNewGoal({
-      title: "",
-      targetAmount: "",
-      currentAmount: "",
-      deadline: "",
-      category: "",
-    });
+  const handleCategoryChange = (value: string) => {
+    setNewGoal({ ...newGoal, category: value });
+  };
+
+  const handleAddGoal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user?.id) {
+      toast({
+        title: "Error",
+        description: "You must be logged in to add goals",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Validate inputs
+    if (!newGoal.title || !newGoal.targetAmount || !newGoal.deadline) {
+      toast({
+        title: "Error",
+        description: "Please fill in all required fields",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setSubmitting(true);
+    
+    try {
+      const targetAmount = parseFloat(newGoal.targetAmount);
+      const currentAmount = newGoal.currentAmount ? parseFloat(newGoal.currentAmount) : 0;
+      
+      // Format deadline to ISO string
+      const deadlineDate = parseISO(newGoal.deadline);
+      if (!isValid(deadlineDate)) {
+        throw new Error("Invalid date format");
+      }
+      
+      const createdGoal = await addGoal(user.id, {
+        title: newGoal.title,
+        targetAmount,
+        currentAmount,
+        deadline: newGoal.deadline,
+        category: newGoal.category,
+      });
+      
+      if (createdGoal) {
+        setGoals([createdGoal, ...goals]);
+        toast({
+          title: "Success",
+          description: "Goal added successfully",
+        });
+        
+        // Reset form
+        setNewGoal({
+          title: "",
+          targetAmount: "",
+          currentAmount: "",
+          deadline: "",
+          category: "Savings",
+        });
+        
+        setShowAddGoal(false);
+      }
+    } catch (error) {
+      console.error("Error adding goal:", error);
+      toast({
+        title: "Error",
+        description: "Failed to add goal",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  
+  const handleDeleteGoal = async (id: string) => {
+    if (!user?.id) return;
+    
+    try {
+      const success = await deleteGoal(id);
+      
+      if (success) {
+        setGoals(goals.filter(goal => goal.id !== id));
+        toast({
+          title: "Success",
+          description: "Goal deleted successfully",
+        });
+      }
+    } catch (error) {
+      console.error("Error deleting goal:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete goal",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Format date for display
+  const formatDeadline = (dateString: string) => {
+    try {
+      if (!dateString) return "No deadline";
+      const date = parseISO(dateString);
+      return isValid(date) ? format(date, "MMM d, yyyy") : dateString;
+    } catch (error) {
+      return dateString;
+    }
+  };
+  
+  // Calculate progress percentage
+  const calculateProgress = (current: number, target: number) => {
+    const progress = Math.round((current / target) * 100);
+    return isNaN(progress) ? 0 : Math.min(progress, 100);
   };
 
   return (
@@ -97,25 +223,25 @@ const GoalsSummary = ({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700 p-6 h-full"
+      className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 p-6 h-full"
     >
       <div className="flex flex-row items-center justify-between pb-2">
         <div>
           <h2 className="text-xl font-semibold flex items-center">
-            <Target className="h-5 w-5 mr-2 text-yellow-400" />
+            <Target className="h-5 w-5 mr-2 text-indigo-400" />
             Financial Goals
           </h2>
           <p className="text-sm text-gray-400 mt-1">
-            Track your progress towards your goals
+            Track progress towards your targets
           </p>
         </div>
         <Button
           onClick={() => setShowAddGoal(true)}
           variant="outline"
           size="sm"
-          className="flex items-center gap-1 border-gray-600 text-yellow-400 hover:text-yellow-300 hover:border-yellow-500/50 bg-transparent"
+          className="flex items-center gap-1 border-indigo-500/30 bg-indigo-500/10 text-indigo-400 hover:text-indigo-300 hover:border-indigo-500/50"
         >
-          <PlusCircle className="h-4 w-4" />
+          <Plus className="h-4 w-4" />
           <span>Add Goal</span>
         </Button>
       </div>
@@ -126,194 +252,244 @@ const GoalsSummary = ({
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="bg-gray-700/50 rounded-lg p-4 mb-4 border border-gray-600/50 overflow-hidden"
+            className="overflow-hidden mb-6"
           >
-            <h3 className="text-lg font-medium mb-4">Create New Goal</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div className="md:col-span-2">
-                <Label
-                  htmlFor="title"
-                  className="text-sm text-gray-300 mb-1 block"
-                >
-                  Goal Title
-                </Label>
-                <Input
-                  id="title"
-                  name="title"
-                  placeholder="e.g. New Car, Vacation, etc."
-                  value={newGoal.title}
-                  onChange={handleInputChange}
-                  className="bg-gray-800/50 border-gray-600 text-white placeholder:text-gray-500 focus-visible:ring-yellow-500"
-                />
-              </div>
-              <div>
-                <Label
-                  htmlFor="targetAmount"
-                  className="text-sm text-gray-300 mb-1 block"
-                >
-                  Target Amount ($)
-                </Label>
-                <Input
-                  id="targetAmount"
-                  name="targetAmount"
-                  type="number"
-                  placeholder="0.00"
-                  value={newGoal.targetAmount}
-                  onChange={handleInputChange}
-                  className="bg-gray-800/50 border-gray-600 text-white placeholder:text-gray-500 focus-visible:ring-yellow-500"
-                />
-              </div>
-              <div>
-                <Label
-                  htmlFor="currentAmount"
-                  className="text-sm text-gray-300 mb-1 block"
-                >
-                  Current Amount ($)
-                </Label>
-                <Input
-                  id="currentAmount"
-                  name="currentAmount"
-                  type="number"
-                  placeholder="0.00"
-                  value={newGoal.currentAmount}
-                  onChange={handleInputChange}
-                  className="bg-gray-800/50 border-gray-600 text-white placeholder:text-gray-500 focus-visible:ring-yellow-500"
-                />
-              </div>
-              <div>
-                <Label
-                  htmlFor="deadline"
-                  className="text-sm text-gray-300 mb-1 block"
-                >
-                  Target Date
-                </Label>
-                <Input
-                  id="deadline"
-                  name="deadline"
-                  type="date"
-                  value={newGoal.deadline}
-                  onChange={handleInputChange}
-                  className="bg-gray-800/50 border-gray-600 text-white placeholder:text-gray-500 focus-visible:ring-yellow-500"
-                />
-              </div>
-              <div>
-                <Label
-                  htmlFor="category"
-                  className="text-sm text-gray-300 mb-1 block"
-                >
-                  Category
-                </Label>
-                <Input
-                  id="category"
-                  name="category"
-                  placeholder="e.g. Savings, Travel, etc."
-                  value={newGoal.category}
-                  onChange={handleInputChange}
-                  className="bg-gray-800/50 border-gray-600 text-white placeholder:text-gray-500 focus-visible:ring-yellow-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowAddGoal(false)}
-                className="text-gray-400 hover:text-white"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleAddGoal}
-                className="bg-yellow-500 hover:bg-yellow-600 text-gray-900"
-                size="sm"
-              >
-                Create Goal
-              </Button>
+            <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-700/50 rounded-lg p-4 mt-4">
+              <h3 className="text-md font-medium mb-3 flex items-center">
+                <PlusCircle className="h-4 w-4 mr-2 text-indigo-400" />
+                New Financial Goal
+              </h3>
+              <form onSubmit={handleAddGoal}>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="title">Goal Title</Label>
+                    <Input
+                      id="title"
+                      name="title"
+                      value={newGoal.title}
+                      onChange={handleInputChange}
+                      placeholder="e.g., Emergency Fund"
+                      className="bg-gray-800/50 border-gray-700"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="category">Category</Label>
+                    <Select value={newGoal.category} onValueChange={handleCategoryChange}>
+                      <SelectTrigger className="bg-gray-800/50 border-gray-700">
+                        <SelectValue placeholder="Select a category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {GOAL_CATEGORIES.map((category) => (
+                          <SelectItem key={category} value={category}>
+                            {category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="targetAmount">Target Amount</Label>
+                    <Input
+                      id="targetAmount"
+                      name="targetAmount"
+                      value={newGoal.targetAmount}
+                      onChange={handleInputChange}
+                      placeholder="10000"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="bg-gray-800/50 border-gray-700"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="currentAmount">Current Amount (Optional)</Label>
+                    <Input
+                      id="currentAmount"
+                      name="currentAmount"
+                      value={newGoal.currentAmount}
+                      onChange={handleInputChange}
+                      placeholder="0"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="bg-gray-800/50 border-gray-700"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="deadline">Target Date</Label>
+                    <Input
+                      id="deadline"
+                      name="deadline"
+                      value={newGoal.deadline}
+                      onChange={handleInputChange}
+                      type="date"
+                      className="bg-gray-800/50 border-gray-700"
+                      required
+                    />
+                  </div>
+                  <div className="flex items-end space-x-2">
+                    <Button
+                      type="submit"
+                      disabled={submitting}
+                      className="flex-1 bg-indigo-600 hover:bg-indigo-700"
+                    >
+                      {submitting ? (
+                        <>
+                          <span className="mr-2">Saving</span>
+                          <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                          >
+                            <TrendingUp className="h-4 w-4" />
+                          </motion.div>
+                        </>
+                      ) : (
+                        "Add Goal"
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowAddGoal(false)}
+                      className="border-gray-700 hover:bg-gray-800 hover:text-white"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </form>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <div className="space-y-4">
-        {goals.length === 0 ? (
-          <div className="text-center py-6 text-gray-400">
-            <Target className="h-12 w-12 mx-auto mb-2 text-gray-500/50" />
-            <p>No financial goals yet</p>
-            <p className="text-sm">
-              Set your first goal to start tracking your progress
-            </p>
-          </div>
-        ) : (
-          goals.map((goal, index) => {
-            const progress = Math.round(
-              (goal.currentAmount / goal.targetAmount) * 100,
-            );
-            const remainingAmount = goal.targetAmount - goal.currentAmount;
-            const deadlineDate = new Date(goal.deadline);
-            const formattedDeadline = deadlineDate.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
-
-            return (
-              <motion.div
-                key={goal.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1, duration: 0.3 }}
-                className="p-3 border border-gray-600/30 rounded-lg bg-gray-700/30"
-              >
-                <div className="flex justify-between items-start mb-2">
-                  <div>
-                    <h3 className="font-medium text-white">{goal.title}</h3>
-                    <div className="text-sm text-gray-400 flex items-center gap-1">
-                      {goal.category === "Travel" && (
-                        <TrendingUp className="h-3 w-3 text-blue-400" />
-                      )}
-                      {goal.category === "Technology" && (
-                        <Target className="h-3 w-3 text-purple-400" />
-                      )}
-                      {goal.category === "Savings" && (
-                        <Award className="h-3 w-3 text-yellow-400" />
-                      )}
-                      <span>{goal.category}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-medium text-white">
-                      ${goal.currentAmount} / ${goal.targetAmount}
-                    </div>
-                    <div className="text-xs text-gray-400">
-                      Due {formattedDeadline}
-                    </div>
-                  </div>
+      {isLoading ? (
+        <div className="space-y-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="border border-gray-700/50 rounded-xl p-5 bg-gray-800/30">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <Skeleton className="h-5 w-40 bg-gray-700/50 mb-2" />
+                  <Skeleton className="h-4 w-20 bg-gray-700/50" />
+                </div>
+                <Skeleton className="h-8 w-8 rounded-full bg-gray-700/50" />
+              </div>
+              <Skeleton className="h-3 w-full bg-gray-700/50 mb-2" />
+              <Skeleton className="h-6 w-16 bg-gray-700/50 mt-4" />
+            </div>
+          ))}
+        </div>
+      ) : goals.length > 0 ? (
+        <div className="space-y-4 mt-4">
+          {goals.map((goal) => (
+            <motion.div
+              key={goal.id}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="border border-gray-700/50 rounded-xl p-5 bg-gray-800/30 backdrop-blur-sm"
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="font-medium text-white">{goal.title}</h3>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {goal.category} • Due {formatDeadline(goal.deadline)}
+                  </p>
+                </div>
+                <div className="flex space-x-2">
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-white">
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-gray-400 hover:text-red-400"
+                    onClick={() => handleDeleteGoal(goal.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between items-center text-sm mb-1.5">
+                  <span className="text-gray-400">Progress</span>
+                  <span className="font-medium">
+                    {calculateProgress(goal.currentAmount, goal.targetAmount)}%
+                  </span>
                 </div>
                 <Progress
-                  value={progress}
-                  className="h-2 mb-1 bg-gray-600"
-                  indicatorClassName="bg-yellow-500"
+                  value={calculateProgress(goal.currentAmount, goal.targetAmount)}
+                  className="h-2 bg-gray-700/50"
                 />
-                <div className="flex justify-between text-xs text-gray-400 mt-1">
-                  <span>{progress}% complete</span>
-                  <span>${remainingAmount} to go</span>
+                <div className="flex justify-between mt-3">
+                  <span className="text-xs text-gray-400">
+                    {formatCurrency(goal.currentAmount, { code: currency.code, symbol: currency.symbol, locale: currency.locale })}
+                  </span>
+                  <span className="text-xs font-medium">
+                    {formatCurrency(goal.targetAmount, { code: currency.code, symbol: currency.symbol, locale: currency.locale })}
+                  </span>
                 </div>
-              </motion.div>
-            );
-          })
-        )}
-      </div>
-
-      <div className="mt-4 flex justify-center">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-yellow-400 hover:text-yellow-300"
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex flex-col items-center justify-center text-center py-12"
         >
-          View All Goals <ArrowRight className="ml-1 h-3 w-3" />
-        </Button>
-      </div>
+          <div className="mb-6">
+            <motion.div
+              className="inline-block"
+              animate={{ y: [0, -10, 0] }}
+              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <Target className="h-16 w-16 text-indigo-400 mb-4 opacity-50" />
+            </motion.div>
+          </div>
+          <h3 className="text-xl font-medium text-white mb-2">Set Your Financial Goals</h3>
+          <p className="text-gray-400 mb-8 max-w-md">
+            Define clear financial targets and track your progress toward achieving them.
+          </p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl">
+            <div className="border border-blue-500/20 bg-blue-500/10 rounded-xl p-4 text-center">
+              <div className="p-2 rounded-full bg-blue-500/20 inline-flex mb-3">
+                <PiggyBank className="h-5 w-5 text-blue-400" />
+              </div>
+              <h4 className="text-white font-medium mb-1">Savings</h4>
+              <p className="text-sm text-gray-400">Build your emergency fund or general savings</p>
+            </div>
+            
+            <div className="border border-green-500/20 bg-green-500/10 rounded-xl p-4 text-center">
+              <div className="p-2 rounded-full bg-green-500/20 inline-flex mb-3">
+                <ArrowRight className="h-5 w-5 text-green-400" />
+              </div>
+              <h4 className="text-white font-medium mb-1">Travel</h4>
+              <p className="text-sm text-gray-400">Plan for your dream vacation or travel experience</p>
+            </div>
+            
+            <div className="border border-purple-500/20 bg-purple-500/10 rounded-xl p-4 text-center">
+              <div className="p-2 rounded-full bg-purple-500/20 inline-flex mb-3">
+                <Home className="h-5 w-5 text-purple-400" />
+              </div>
+              <h4 className="text-white font-medium mb-1">Home</h4>
+              <p className="text-sm text-gray-400">Save for home purchase or improvements</p>
+            </div>
+          </div>
+          
+          <Button
+            onClick={() => setShowAddGoal(true)}
+            className="mt-10 bg-indigo-600 hover:bg-indigo-700"
+            size="lg"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Create Your First Goal
+          </Button>
+        </motion.div>
+      )}
     </motion.div>
   );
 };

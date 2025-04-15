@@ -1,35 +1,60 @@
-import path from "path";
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react-swc";
-import { tempo } from "tempo-devtools/dist/vite";
-
-const conditionalPlugins: [string, Record<string, any>][] = [];
-
-// @ts-ignore
-if (process.env.TEMPO === "true") {
-  conditionalPlugins.push(["tempo-devtools/swc", {}]);
-}
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  base: process.env.NODE_ENV === "development" ? "/" : process.env.VITE_BASE_PATH || "/",
-  optimizeDeps: {
-    entries: ["src/main.tsx", "src/tempobook/**/*"],
-  },
-  plugins: [
-    react({
-      plugins: conditionalPlugins,
-    }),
-    tempo(),
-  ],
+  plugins: [react()],
   resolve: {
-    preserveSymlinks: true,
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    // Enable Rollup code splitting
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          // Create separate chunk for large dependencies
+          if (id.includes('node_modules')) {
+            if (id.includes('react') || id.includes('react-dom')) {
+              return 'vendor-react';
+            }
+            if (id.includes('framer-motion')) {
+              return 'vendor-framer-motion';
+            }
+            if (id.includes('recharts')) {
+              return 'vendor-recharts';
+            }
+            return 'vendor'; // Put other dependencies in a common bundle
+          }
+        },
+      },
+    },
+    // Enable minification and compression
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+      },
+    },
+    // Improve loading performance with preloading
+    assetsInlineLimit: 4096, // Inline assets less than 4kb
+    cssCodeSplit: true,
+    sourcemap: false, // Disable sourcemaps for production
+  },
+  // Optimize development experience
   server: {
-    // @ts-ignore
-    allowedHosts: true,
-  }
+    port: 3000,
+    open: true,
+    host: true,
+    hmr: {
+      overlay: true,
+    },
+  },
+  // Caching and performance optimizations
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'react-router-dom', 'framer-motion'],
+    exclude: [],
+  },
 });

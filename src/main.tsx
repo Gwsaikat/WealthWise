@@ -1,18 +1,41 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App.tsx";
-import "./index.css";
 import { BrowserRouter } from "react-router-dom";
+import App from "./App.tsx";
+// import TestApp from "./TestApp.tsx";
+import "./index.css";
+import AuthProvider from "./context/AuthContext";
+import UserProvider from "./context/UserContext";
+import ErrorBoundary from "./components/ErrorBoundary";
 
-import { TempoDevtools } from "tempo-devtools";
-TempoDevtools.init();
+// Calculate the base URL for routing
+const basename = import.meta.env.BASE_URL || '/';
 
-const basename = import.meta.env.BASE_URL;
+// Define the Tempo DevTools import only if needed
+const TempoDevtools = import.meta.env.VITE_TEMPO === "true" 
+  ? await import("tempo-devtools").then((m) => m.TempoDevtools) 
+  : null;
+
+// Log environment variables to console for debugging
+console.log("============== ENVIRONMENT VARIABLES ==============");
+console.log("BASE_URL:", import.meta.env.BASE_URL);
+console.log("VITE_SUPABASE_URL:", import.meta.env.VITE_SUPABASE_URL);
+console.log("VITE_SUPABASE_ANON_KEY exists:", Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY));
+console.log("VITE_DEV_MODE:", import.meta.env.VITE_DEV_MODE);
+console.log("VITE_DEBUG:", import.meta.env.VITE_DEBUG);
+console.log("==================================================");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter basename={basename}>
-      <App />
-    </BrowserRouter>
+    <ErrorBoundary>
+      {/* Use the full app with Router and Auth provider */}
+      <BrowserRouter basename={basename}>
+        <AuthProvider>
+          <UserProvider>
+            <App />
+          </UserProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   </React.StrictMode>,
 );
