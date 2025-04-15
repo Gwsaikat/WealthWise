@@ -11,11 +11,6 @@ import ErrorBoundary from "./components/ErrorBoundary";
 // Calculate the base URL for routing
 const basename = import.meta.env.BASE_URL || '/';
 
-// Define the Tempo DevTools import only if needed
-const TempoDevtools = import.meta.env.VITE_TEMPO === "true" 
-  ? await import("tempo-devtools").then((m) => m.TempoDevtools) 
-  : null;
-
 // Log environment variables to console for debugging
 console.log("============== ENVIRONMENT VARIABLES ==============");
 console.log("BASE_URL:", import.meta.env.BASE_URL);
